@@ -113,6 +113,9 @@ dependencies {
   // WorkManager Background Processing (Sync & PDF Schedule Parsing)
   implementation(libs.androidx.work.runtime.ktx)
 
+  // PDF Text Layer & Bounding-Box Extraction (Search & On-Canvas Highlighting)
+  implementation(libs.pdfbox.android)
+
   // Kotlinx Serialization (Supabase REST & Mailtrap payloads)
   implementation(libs.kotlinx.serialization.json)
 

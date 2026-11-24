@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -109,6 +110,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -120,12 +122,18 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -152,7 +160,9 @@ import com.example.parishsync.data.model.Congregation
 import com.example.parishsync.data.model.UserRole
 import com.example.parishsync.workers.MiniHqScraperService
 import com.example.parishsync.workers.ParishNotificationHelper
+import com.example.parishsync.workers.PdfPageTextIndex
 import com.example.parishsync.workers.PdfScheduleParser
+import com.example.parishsync.workers.PdfTextSearchEngine
 import java.io.File
 import java.text.SimpleDateFormat
 import java.time.LocalDate
@@ -203,6 +213,7 @@ fun ServingScheduleScreen(
   var selectedDistrictPdf by remember { mutableStateOf<MiniHqResourceEntity?>(null) }
   var selectedDsgTextResource by remember { mutableStateOf<MiniHqResourceEntity?>(null) }
   var selectedDsgAudioResource by remember { mutableStateOf<MiniHqResourceEntity?>(null) }
+  var selectedAnnouncement by remember { mutableStateOf<MiniHqAnnouncement?>(null) }
   var currentSubTab by remember { mutableStateOf(0) } // 0: Schedules, 1: DSG, 2: Announcements
   var selectedMonthYear by remember { mutableStateOf("November 2026") } // "November 2026" (Current) or "December 2026" (Next)
   var announcementCategoryFilter by remember { mutableStateOf("All") } // "All", "Funeral Notice", "Serving Schedules", "Divine Service Prep"
@@ -827,7 +838,10 @@ fun ServingScheduleScreen(
               }
 
               items(filteredAnnouncements, key = { it.id }) { ann ->
-                MiniHqAnnouncementCard(announcement = ann)
+                MiniHqAnnouncementCard(
+                  announcement = ann,
+                  onClick = { selectedAnnouncement = ann }
+                )
               }
 
               item { Spacer(Modifier.height(40.dp)) }
@@ -835,6 +849,33 @@ fun ServingScheduleScreen(
           }
         }
       }
+    }
+
+    // --- Announcement "More Details" Modal ---
+    selectedAnnouncement?.let { ann ->
+      AnnouncementDetailsDialog(
+        announcement = ann,
+        onDismiss = { selectedAnnouncement = null },
+        onOpenAttachedPdf = { pdfUrl, pdfName ->
+          val syntheticResource = MiniHqResourceEntity(
+            id = "ann_pdf_${ann.id}",
+            resourceCategory = MiniHqScraperService.CATEGORY_DSG_ASSET,
+            monthYear = ann.date,
+            isNextMonth = false,
+            district = "",
+            serviceDate = ann.date,
+            serviceTitle = ann.title,
+            assetType = "Announcement PDF",
+            fileName = pdfName.ifBlank { "Announcement.pdf" },
+            sourceUrl = pdfUrl,
+            localPath = "",
+            fileSize = 0L,
+            mimeType = "application/pdf"
+          )
+          selectedAnnouncement = null
+          selectedDistrictPdf = syntheticResource
+        }
+      )
     }
 
     // --- DSG Text / References / Transcript Reader Dialog ---
@@ -1276,12 +1317,15 @@ private fun StagedMiniHqServiceCard(
 }
 
 @Composable
-private fun MiniHqAnnouncementCard(announcement: MiniHqAnnouncement) {
-  val context = LocalContext.current
+private fun MiniHqAnnouncementCard(
+  announcement: MiniHqAnnouncement,
+  onClick: () -> Unit
+) {
   val isFuneral = announcement.category.equals("Funeral Notice", ignoreCase = true)
   val isPrep = announcement.category.equals("Divine Service Prep", ignoreCase = true)
 
   Card(
+    onClick = onClick,
     shape = RoundedCornerShape(12.dp),
     colors = CardDefaults.cardColors(
       containerColor = if (isFuneral) Color(0xFFFFF3E0) else if (isPrep) Color(0xFFF3E5F5) else Color(0xFFE3F2FD)
@@ -1327,38 +1371,262 @@ private fun MiniHqAnnouncementCard(announcement: MiniHqAnnouncement) {
         fontWeight = FontWeight.Bold
       )
 
-      Text(
-        text = announcement.summary,
-        style = MaterialTheme.typography.bodyMedium,
-        fontWeight = FontWeight.SemiBold
-      )
-
       Surface(
-        color = Color.White.copy(alpha = 0.7f),
+        color = Color.White.copy(alpha = 0.78f),
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth()
       ) {
         Text(
-          text = announcement.content,
+          text = announcement.summary.ifBlank { announcement.content.ifBlank { announcement.title } },
           style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurface,
           modifier = Modifier.padding(10.dp)
         )
       }
 
-      if (announcement.sourceUrl.isNotBlank()) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Text(
+          text = "View Details",
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.SemiBold,
+          color = if (isFuneral) Color(0xFFE65100) else if (isPrep) Color(0xFF6A1B9A) else NacNavy
+        )
+        Spacer(Modifier.width(4.dp))
+        Icon(
+          imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+          contentDescription = "View Details",
+          tint = if (isFuneral) Color(0xFFE65100) else if (isPrep) Color(0xFF6A1B9A) else NacNavy,
+          modifier = Modifier.size(14.dp)
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun AnnouncementDetailsDialog(
+  announcement: MiniHqAnnouncement,
+  onDismiss: () -> Unit,
+  onOpenAttachedPdf: (String, String) -> Unit
+) {
+  val context = LocalContext.current
+  val clipboardManager = LocalClipboardManager.current
+  var urlCopied by remember(announcement.id, announcement.sourceUrl) { mutableStateOf(false) }
+  LaunchedEffect(urlCopied) {
+    if (urlCopied) {
+      delay(2500)
+      urlCopied = false
+    }
+  }
+
+  val isFuneral = announcement.category.equals("Funeral Notice", ignoreCase = true)
+  val isPrep = announcement.category.equals("Divine Service Prep", ignoreCase = true)
+  val badgeColor = if (isFuneral) Color(0xFFE65100) else if (isPrep) Color(0xFF6A1B9A) else NacNavy
+
+  InWindowModalOverlay(onDismiss = onDismiss) {
+    Surface(
+      shape = RoundedCornerShape(18.dp),
+      color = MaterialTheme.colorScheme.surface,
+      shadowElevation = 12.dp,
+      modifier = Modifier
+        .fillMaxWidth(0.95f)
+        .padding(vertical = 8.dp)
+    ) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+      ) {
+        // Header: Category Badge, Title, Published Date, Close
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.Top
+        ) {
+          Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+              Surface(
+                color = badgeColor,
+                shape = RoundedCornerShape(6.dp)
+              ) {
+                Text(
+                  text = announcement.category.uppercase(),
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.Bold,
+                  color = Color.White,
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+              }
+              Text(
+                text = announcement.date,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+            Text(
+              text = announcement.title,
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.Bold
+            )
+          }
+          TextButton(onClick = onDismiss) {
+            Text("Close")
+          }
+        }
+
+        HorizontalDivider()
+
+        // Body: Full formatted MiniHQ announcement content
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f, fill = false)
+            .height(340.dp)
+            .verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+          if (announcement.bodyHtml.isNotBlank()) {
+            AndroidView(
+              factory = { ctx ->
+                android.widget.TextView(ctx).apply {
+                  textSize = 14.5f
+                  setLineSpacing(6f, 1.15f)
+                  setTextColor(android.graphics.Color.parseColor("#1E293B"))
+                  setLinkTextColor(android.graphics.Color.parseColor("#0B3B60"))
+                  movementMethod = android.text.method.LinkMovementMethod.getInstance()
+                }
+              },
+              update = { tv ->
+                tv.text = androidx.core.text.HtmlCompat.fromHtml(
+                  announcement.bodyHtml,
+                  androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY
+                )
+              },
+              modifier = Modifier.fillMaxWidth()
+            )
+          } else {
+            Text(
+              text = announcement.content.ifBlank { announcement.summary.ifBlank { announcement.title } },
+              style = MaterialTheme.typography.bodyMedium,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+          }
+
+          if (announcement.attachedPdfUrl.isNotBlank()) {
+            Button(
+              onClick = {
+                onOpenAttachedPdf(announcement.attachedPdfUrl, announcement.attachedPdfName)
+              },
+              colors = ButtonDefaults.buttonColors(
+                containerColor = NacNavy,
+                contentColor = Color.White
+              ),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(Modifier.width(6.dp))
+              Text(
+                text = "Preview / Download PDF (${announcement.attachedPdfName.ifBlank { "Document" }})",
+                maxLines = 1
+              )
+            }
+          }
+        }
+
+        HorizontalDivider()
+
+        // Footer: Full untruncated source_url + Copy URL + Close
+        Surface(
+          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = "Source URL",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+              Text(
+                text = announcement.sourceUrl.ifBlank { "MiniHQ Portal" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .horizontalScroll(rememberScrollState())
+              )
+            }
+            OutlinedButton(
+              onClick = {
+                if (announcement.sourceUrl.isNotBlank()) {
+                  clipboardManager.setText(AnnotatedString(announcement.sourceUrl))
+                  urlCopied = true
+                }
+              },
+              enabled = announcement.sourceUrl.isNotBlank(),
+              contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+              shape = RoundedCornerShape(8.dp)
+            ) {
+              Icon(
+                imageVector = if (urlCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp)
+              )
+              Spacer(Modifier.width(4.dp))
+              Text(
+                text = if (urlCopied) "Copied!" else "Copy URL",
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                softWrap = false
+              )
+            }
+          }
+        }
+
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.End
         ) {
-          TextButton(
-            onClick = {
-              val intent = Intent(Intent.ACTION_VIEW, Uri.parse(announcement.sourceUrl))
-              context.startActivity(intent)
+          if (announcement.sourceUrl.isNotBlank()) {
+            TextButton(
+              onClick = {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(announcement.sourceUrl))
+                context.startActivity(intent)
+              }
+            ) {
+              Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
+              Spacer(Modifier.width(4.dp))
+              Text("Open in Browser")
             }
+            Spacer(Modifier.width(8.dp))
+          }
+          Button(
+            onClick = onDismiss,
+            colors = ButtonDefaults.buttonColors(containerColor = NacNavy, contentColor = Color.White),
+            shape = RoundedCornerShape(10.dp)
           ) {
-            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("Open on MiniHQ", style = MaterialTheme.typography.labelSmall)
+            Text("Close")
           }
         }
       }
@@ -2060,8 +2328,8 @@ private fun DistrictPdfViewerDialog(
   var renderedPages by remember(resource.id, resource.checksum, resource.localPath) {
     mutableStateOf<List<ImageBitmap>>(emptyList())
   }
-  var searchableLines by remember(resource.id, resource.checksum, resource.localPath) {
-    mutableStateOf<List<String>>(emptyList())
+  var pageTextIndexes by remember(resource.id, resource.checksum, resource.localPath) {
+    mutableStateOf<List<PdfPageTextIndex>>(emptyList())
   }
   var showFullScreenViewer by remember { mutableStateOf(false) }
   var fileSizeKb by remember(resource.id, resource.checksum, resource.localPath) {
@@ -2110,11 +2378,11 @@ private fun DistrictPdfViewerDialog(
     isLoadingPages = false
 
     if (validFile != null) {
-      val (allPages, extractedLines) = withContext(Dispatchers.IO) {
+      val (allPages, extractedIndexes) = withContext(Dispatchers.IO) {
         val restPages = runCatching {
           ParcelFileDescriptor.open(validFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
             PdfRenderer(pfd).use { renderer ->
-              val maxPages = renderer.pageCount.coerceAtMost(8)
+              val maxPages = renderer.pageCount.coerceAtMost(24)
               if (maxPages <= 1) emptyList()
               else (1 until maxPages).map { pageIndex ->
                 renderer.openPage(pageIndex).use { page ->
@@ -2129,13 +2397,13 @@ private fun DistrictPdfViewerDialog(
             }
           }
         }.getOrDefault(emptyList())
-        val lines = runCatching {
-          PdfScheduleParser.extractSearchableLinesFromPdfBytes(validFile.readBytes())
+        val indexes = runCatching {
+          PdfTextSearchEngine.extractPageTextIndexes(context, validFile, maxPages = 24)
         }.getOrDefault(emptyList())
-        (initial.second + restPages) to lines
+        (initial.second + restPages) to indexes
       }
       renderedPages = allPages
-      searchableLines = extractedLines
+      pageTextIndexes = extractedIndexes
     }
   }
 
@@ -2381,7 +2649,7 @@ private fun DistrictPdfViewerDialog(
     FullScreenPdfViewerDialog(
       title = fullScreenTitle,
       pages = renderedPages,
-      searchableLines = searchableLines,
+      pageTextIndexes = pageTextIndexes,
       onDismiss = { showFullScreenViewer = false }
     )
   }
@@ -2391,7 +2659,7 @@ private fun DistrictPdfViewerDialog(
 private fun FullScreenPdfViewerDialog(
   title: String,
   pages: List<ImageBitmap>,
-  searchableLines: List<String>,
+  pageTextIndexes: List<PdfPageTextIndex>,
   onDismiss: () -> Unit
 ) {
   var showSearchBar by remember { mutableStateOf(false) }
@@ -2399,15 +2667,48 @@ private fun FullScreenPdfViewerDialog(
   var activeMatchIndex by remember { mutableStateOf(0) }
   var scale by remember { mutableStateOf(1f) }
   var panOffset by remember { mutableStateOf(Offset.Zero) }
+  val scrollState = rememberScrollState()
+  var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+  val pageBoundsMap = remember { mutableStateMapOf<Int, Pair<Float, Float>>() }
+  val pageWidthMap = remember { mutableStateMapOf<Int, Float>() }
+  val pageLeftMap = remember { mutableStateMapOf<Int, Float>() }
 
-  val matchedLines = remember(searchQuery, searchableLines) {
-    val q = searchQuery.trim()
-    if (q.isBlank()) emptyList()
-    else searchableLines.filter { it.contains(q, ignoreCase = true) }
+  val matches = remember(searchQuery, pageTextIndexes) {
+    PdfTextSearchEngine.searchMatches(pageTextIndexes, searchQuery)
   }
 
-  LaunchedEffect(matchedLines) {
+  LaunchedEffect(matches) {
     activeMatchIndex = 0
+  }
+
+  LaunchedEffect(activeMatchIndex, matches, viewportSize) {
+    if (matches.isEmpty() || viewportSize.height <= 0) return@LaunchedEffect
+    val match = matches[activeMatchIndex.coerceIn(0, matches.lastIndex)]
+    val bounds = pageBoundsMap[match.pageIndex] ?: return@LaunchedEffect
+    val pageTopY = bounds.first
+    val pageHeight = bounds.second
+    val pageWidth = pageWidthMap[match.pageIndex] ?: viewportSize.width.toFloat()
+    val pageLeft = pageLeftMap[match.pageIndex] ?: 0f
+
+    val matchCenterYNorm = ((match.primaryRect.top + match.primaryRect.bottom) / 2f).coerceIn(0f, 1f)
+    val matchCenterXNorm = ((match.primaryRect.left + match.primaryRect.right) / 2f).coerceIn(0f, 1f)
+    val matchYInColumn = pageTopY + matchCenterYNorm * pageHeight
+    val targetScrollY = (matchYInColumn - viewportSize.height / 2f)
+      .toInt()
+      .coerceIn(0, scrollState.maxValue.coerceAtLeast(0))
+
+    scrollState.animateScrollTo(targetScrollY)
+
+    if (scale > 1.05f) {
+      val centerX = viewportSize.width / 2f
+      val centerY = viewportSize.height / 2f
+      val unscaledX = pageLeft + matchCenterXNorm * pageWidth
+      val unscaledY = matchYInColumn - targetScrollY.toFloat()
+      panOffset = Offset(
+        x = -(unscaledX - centerX) * scale,
+        y = -(unscaledY - centerY) * scale
+      )
+    }
   }
 
   androidx.activity.compose.BackHandler(onBack = onDismiss)
@@ -2521,20 +2822,20 @@ private fun FullScreenPdfViewerDialog(
                     ),
                     modifier = Modifier.weight(1f)
                   )
-                  if (matchedLines.isNotEmpty()) {
+                  if (matches.isNotEmpty()) {
                     Text(
-                      text = "${activeMatchIndex + 1}/${matchedLines.size}",
+                      text = "${activeMatchIndex + 1} of ${matches.size}",
                       style = MaterialTheme.typography.labelSmall,
                       color = NacGold,
                       fontWeight = FontWeight.Bold
                     )
                     IconButton(onClick = {
-                      activeMatchIndex = if (activeMatchIndex - 1 < 0) matchedLines.lastIndex else activeMatchIndex - 1
+                      activeMatchIndex = if (activeMatchIndex - 1 < 0) matches.lastIndex else activeMatchIndex - 1
                     }) {
                       Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous match", tint = Color.White)
                     }
                     IconButton(onClick = {
-                      activeMatchIndex = (activeMatchIndex + 1) % matchedLines.size
+                      activeMatchIndex = (activeMatchIndex + 1) % matches.size
                     }) {
                       Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next match", tint = Color.White)
                     }
@@ -2543,38 +2844,6 @@ private fun FullScreenPdfViewerDialog(
                       text = "0 matches",
                       style = MaterialTheme.typography.labelSmall,
                       color = Color(0xFFFFCDD2)
-                    )
-                  }
-                }
-
-                if (matchedLines.isNotEmpty()) {
-                  val currentLine = matchedLines[activeMatchIndex.coerceIn(0, matchedLines.lastIndex)]
-                  val query = searchQuery.trim()
-                  val annotated = buildAnnotatedString {
-                    var start = 0
-                    while (start < currentLine.length) {
-                      val idx = currentLine.indexOf(query, startIndex = start, ignoreCase = true)
-                      if (idx < 0) {
-                        append(currentLine.substring(start))
-                        break
-                      }
-                      append(currentLine.substring(start, idx))
-                      withStyle(SpanStyle(background = Color(0xFFFACC15), color = Color.Black, fontWeight = FontWeight.Bold)) {
-                        append(currentLine.substring(idx, idx + query.length))
-                      }
-                      start = idx + query.length
-                    }
-                  }
-                  Surface(
-                    color = Color(0xFF1E293B),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                  ) {
-                    Text(
-                      text = annotated,
-                      style = MaterialTheme.typography.bodySmall,
-                      color = Color.White,
-                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
                   }
                 }
@@ -2590,6 +2859,7 @@ private fun FullScreenPdfViewerDialog(
             .weight(1f)
             .zIndex(1f)
             .clipToBounds()
+            .onSizeChanged { viewportSize = it }
             .pointerInput(Unit) {
               detectTapGestures(
                 onDoubleTap = {
@@ -2617,7 +2887,7 @@ private fun FullScreenPdfViewerDialog(
           Column(
             modifier = Modifier
               .fillMaxSize()
-              .verticalScroll(rememberScrollState(), enabled = scale <= 1.05f)
+              .verticalScroll(scrollState, enabled = scale <= 1.05f)
               .graphicsLayer(
                 scaleX = scale,
                 scaleY = scale,
@@ -2628,7 +2898,17 @@ private fun FullScreenPdfViewerDialog(
             verticalArrangement = Arrangement.spacedBy(12.dp)
           ) {
             pages.forEachIndexed { idx, pageBitmap ->
-              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              val pageMatches = matches.filter { it.pageIndex == idx }
+              val activeMatch = matches.getOrNull(activeMatchIndex)
+              Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.onGloballyPositioned { coords ->
+                  // Track page column Y offset for auto-scrolling
+                  pageBoundsMap[idx] = coords.positionInParent().y to coords.size.height.toFloat()
+                  pageWidthMap[idx] = coords.size.width.toFloat()
+                  pageLeftMap[idx] = coords.positionInParent().x
+                }
+              ) {
                 Text(
                   text = "Page ${idx + 1} of ${pages.size}",
                   style = MaterialTheme.typography.labelSmall,
@@ -2639,12 +2919,47 @@ private fun FullScreenPdfViewerDialog(
                   color = Color.White,
                   modifier = Modifier.fillMaxWidth()
                 ) {
-                  Image(
-                    bitmap = pageBitmap,
-                    contentDescription = "Full screen PDF page ${idx + 1}",
-                    contentScale = ContentScale.FillWidth,
-                    modifier = Modifier.fillMaxWidth()
-                  )
+                  Box(modifier = Modifier.fillMaxWidth()) {
+                    Image(
+                      bitmap = pageBitmap,
+                      contentDescription = "Full screen PDF page ${idx + 1}",
+                      contentScale = ContentScale.FillWidth,
+                      modifier = Modifier.fillMaxWidth()
+                    )
+                    if (pageMatches.isNotEmpty()) {
+                      Canvas(modifier = Modifier.matchParentSize()) {
+                        val padX = 1.dp.toPx()
+                        val padY = 1.dp.toPx()
+                        val borderStroke = 1.5.dp.toPx()
+                        for (match in pageMatches) {
+                          val isActive = (match === activeMatch)
+                          for (rect in match.rects) {
+                            val left = (rect.left * size.width - padX).coerceAtLeast(0f)
+                            val top = (rect.top * size.height - padY).coerceAtLeast(0f)
+                            val right = (rect.right * size.width + padX).coerceAtMost(size.width)
+                            val bottom = (rect.bottom * size.height + padY).coerceAtMost(size.height)
+                            val rectSize = Size(
+                              width = (right - left).coerceAtLeast(4f),
+                              height = (bottom - top).coerceAtLeast(4f)
+                            )
+                            drawRect(
+                              color = Color(0xFFFACC15).copy(alpha = if (isActive) 0.55f else 0.45f),
+                              topLeft = Offset(left, top),
+                              size = rectSize
+                            )
+                            if (isActive) {
+                              drawRect(
+                                color = Color(0xFFEA580C),
+                                topLeft = Offset(left, top),
+                                size = rectSize,
+                                style = Stroke(width = borderStroke)
+                              )
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }

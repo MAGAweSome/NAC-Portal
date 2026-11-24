@@ -148,10 +148,12 @@ object PdfScheduleParser {
   }
 
   fun extractSearchableLinesFromPdfBytes(pdfBytes: ByteArray): List<String> {
+    val decoded = PdfTextSearchEngine.extractPlainTextLines(pdfBytes)
+    if (decoded.isNotEmpty()) return decoded
     return extractTextFromPdfBytes(pdfBytes)
       .lines()
       .map { it.trim() }
-      .filter { it.isNotBlank() }
+      .filter { it.isNotBlank() && it.any { ch -> ch.isLetterOrDigit() } }
   }
 
   private fun extractTextFromPdfBytes(pdfBytes: ByteArray): String {

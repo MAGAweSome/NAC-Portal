@@ -39,6 +39,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlin.coroutines.resume
 
 /**
@@ -56,6 +58,8 @@ object MiniHqScraperService {
   private const val KEY_LAST_CHECK_TIME = "key_last_check_time"
   private const val KEY_LAST_OUTCOME = "key_last_outcome"
   private const val KEY_LAST_MESSAGE = "key_last_message"
+  private const val KEY_SCRAPED_ANNOUNCEMENTS_JSON = "key_scraped_announcements_json"
+  private val announcementJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
   const val MINIHQ_URL = "https://www.naccanada.org/imis_prod/MiniHQ"
   const val MINIHQ_USERNAME = "MAGRAU"
@@ -230,14 +234,20 @@ object MiniHqScraperService {
       )
 
       val stagedServices = MiniHqScrapedData.getStagedDivineServices()
+      if (_scrapedAnnouncements.value == MiniHqScrapedData.getMiniHqAnnouncements()) {
+        loadPersistedAnnouncements(context)?.let { persisted ->
+          if (persisted.isNotEmpty()) _scrapedAnnouncements.value = persisted
+        }
+      }
       val announcements = if (scope == SyncScope.ANNOUNCEMENTS || scope == SyncScope.ALL) {
         val liveAnnouncements = if (!landingHtml.isNullOrBlank() && !authRequired) {
-          extractAnnouncementsFromLandingHtml(MINIHQ_URL, landingHtml)
+          scrapeAnnouncementsWithDetails(MINIHQ_URL, landingHtml, sessionCookie)
         } else {
           emptyList()
         }
         if (liveAnnouncements.isNotEmpty()) {
           _scrapedAnnouncements.value = liveAnnouncements
+          persistAnnouncements(context, liveAnnouncements)
           liveAnnouncements
         } else {
           _scrapedAnnouncements.value
@@ -1669,10 +1679,199 @@ object MiniHqScraperService {
         date = dateText.ifBlank { "MiniHQ" },
         category = category,
         summary = title,
-        content = "Source: $fullUrl",
+        content = "",
         sourceUrl = fullUrl
       )
     }.distinctBy { it.sourceUrl }.toList()
+  }
+
+  suspend fun scrapeAnnouncementsWithDetails(
+    landingUrl: String,
+    landingHtml: String,
+    sessionCookie: String
+  ): List<MiniHqAnnouncement> = coroutineScope {
+    val baseList = extractAnnouncementsFromLandingHtml(landingUrl, landingHtml)
+    if (baseList.isEmpty()) return@coroutineScope emptyList()
+
+    baseList.mapIndexed { idx, ann ->
+      async(Dispatchers.IO) {
+        if (ann.sourceUrl.isBlank()) return@async ann
+        val detailHtml = fetchHtmlWithCookie(ann.sourceUrl, sessionCookie)
+        if (detailHtml.isNullOrBlank() || isLandingPageAuthRequired(detailHtml)) {
+          ann.copy(
+            summary = buildConciseAnnouncementSummary(ann.title, ann.content),
+            content = ann.content.ifBlank { ann.title }
+          )
+        } else {
+          parseAnnouncementDetailHtml(ann, detailHtml)
+        }
+      }
+    }.awaitAll()
+  }
+
+  fun parseAnnouncementDetailHtml(
+    base: MiniHqAnnouncement,
+    detailHtml: String
+  ): MiniHqAnnouncement {
+    // 1. Strip scripts, styles, noscripts, and site-wide nav/header/footer chrome
+    var cleaned = detailHtml
+      .replace(Regex("""<script\b[^>]*>.*?</script>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+      .replace(Regex("""<style\b[^>]*>.*?</style>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+      .replace(Regex("""<noscript\b[^>]*>.*?</noscript>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+      .replace(Regex("""<header\b[^>]*>.*?</header>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+      .replace(Regex("""<nav\b[^>]*>.*?</nav>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+      .replace(Regex("""<footer\b[^>]*>.*?</footer>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+
+    // 2. Isolate the main announcement content container from iMIS page layout
+    val mainContentPatterns = listOf(
+      Regex("""<div[^>]+id\s*=\s*["'][^"']*(?:MainContent|ContentPanel|BodyContent|TemplateBody|ContentItem)[^"']*["'][^>]*>(.*?)</div>\s*(?:</div>\s*)*(?:<div[^>]+id\s*=\s*["'][^"']*Footer|<footer|$)""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
+      Regex("""<article\b[^>]*>(.*?)</article>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
+      Regex("""<main\b[^>]*>(.*?)</main>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    )
+    var bodyHtml = mainContentPatterns.firstNotNullOfOrNull { regex ->
+      regex.find(cleaned)?.groupValues?.getOrNull(1)?.takeIf { it.length > 40 }
+    } ?: run {
+      // Fallback: slice from the first main heading after MiniHQ nav ("Sign Out" / "VIDEO")
+      val navEndIdx = Regex("""(?:Sign Out|MEMBER MANAGEMENT|TRAINING|VIDEO)\s*</a>""", RegexOption.IGNORE_CASE)
+        .findAll(cleaned)
+        .lastOrNull()
+        ?.range
+        ?.last ?: 0
+      val afterNav = if (navEndIdx > 0 && navEndIdx < cleaned.length) cleaned.substring(navEndIdx) else cleaned
+      val footerStart = Regex("""<div[^>]+id\s*=\s*["'][^"']*Footer[^"']*["']""", RegexOption.IGNORE_CASE)
+        .find(afterNav)?.range?.first ?: afterNav.length
+      afterNav.substring(0, footerStart)
+    }
+
+    // Remove residual breadcrumb/search/form controls
+    bodyHtml = bodyHtml
+      .replace(Regex("""<form\b[^>]*>""", RegexOption.IGNORE_CASE), "")
+      .replace(Regex("""</form>""", RegexOption.IGNORE_CASE), "")
+      .replace(Regex("""<input\b[^>]*>""", RegexOption.IGNORE_CASE), "")
+      .replace(Regex("""<button\b[^>]*>.*?</button>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+      .trim()
+
+    // 3. Detect any attached/linked PDF inside the announcement body
+    val pdfLinkMatch = Regex(
+      """<a\s+[^>]*href\s*=\s*["']([^"']*\.pdf[^"']*)["'][^>]*>(.*?)</a>""",
+      setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    ).find(bodyHtml)
+    val attachedPdfUrl = pdfLinkMatch?.let { resolveFullHrefUrl(base.sourceUrl, it.groupValues[1]) }.orEmpty()
+    val attachedPdfName = pdfLinkMatch?.let {
+      normalizeHtmlLabel(it.groupValues[2]).ifBlank {
+        attachedPdfUrl.substringAfterLast('/').substringBefore('?').ifBlank { "Announcement.pdf" }
+      }
+    }.orEmpty()
+
+    // 4. Convert HTML to clean structured plain text (body_text)
+    val bodyText = htmlToStructuredPlainText(bodyHtml)
+      .ifBlank { base.title }
+
+    // 5. Generate concise 1-2 sentence summary (~140-180 chars, no mid-word cutoffs)
+    val summaryText = buildConciseAnnouncementSummary(base.title, bodyText)
+
+    return base.copy(
+      summary = summaryText,
+      content = bodyText,
+      bodyHtml = bodyHtml,
+      attachedPdfUrl = attachedPdfUrl,
+      attachedPdfName = attachedPdfName
+    )
+  }
+
+  private fun htmlToStructuredPlainText(html: String): String {
+    if (html.isBlank()) return ""
+    var text = html
+      .replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
+      .replace(Regex("""</(?:p|div|h[1-6]|li|tr)>""", RegexOption.IGNORE_CASE), "\n")
+      .replace(Regex("""<li\b[^>]*>""", RegexOption.IGNORE_CASE), "• ")
+      .replace(Regex("""<td\b[^>]*>""", RegexOption.IGNORE_CASE), " ")
+      .replace(Regex("""<[^>]+>"""), "")
+    text = decodeBasicHtmlEntities(text)
+    return text.lines()
+      .map { it.trim().replace(Regex("""\s{2,}"""), " ") }
+      .fold(mutableListOf<String>()) { acc, line ->
+        if (line.isBlank()) {
+          if (acc.isNotEmpty() && acc.last().isNotBlank()) acc.add("")
+        } else {
+          acc.add(line)
+        }
+        acc
+      }
+      .joinToString("\n")
+      .trim()
+  }
+
+  private fun decodeBasicHtmlEntities(input: String): String {
+    var s = input
+      .replace("&nbsp;", " ", ignoreCase = true)
+      .replace("&amp;", "&", ignoreCase = true)
+      .replace("&lt;", "<", ignoreCase = true)
+      .replace("&gt;", ">", ignoreCase = true)
+      .replace("&quot;", "\"", ignoreCase = true)
+      .replace("&#39;", "'")
+      .replace("&apos;", "'", ignoreCase = true)
+      .replace("&ndash;", "–", ignoreCase = true)
+      .replace("&mdash;", "—", ignoreCase = true)
+    s = Regex("""&#(\d+);""").replace(s) { m ->
+      m.groupValues[1].toIntOrNull()?.toChar()?.toString() ?: m.value
+    }
+    s = Regex("""&#x([0-9a-fA-F]+);""").replace(s) { m ->
+      m.groupValues[1].toIntOrNull(16)?.toChar()?.toString() ?: m.value
+    }
+    return s
+  }
+
+  fun buildConciseAnnouncementSummary(title: String, bodyText: String): String {
+    val cleanLines = bodyText.lines()
+      .map { it.trim() }
+      .filter { it.isNotBlank() && !it.equals(title, ignoreCase = true) && !it.equals("Funeral Notice", ignoreCase = true) }
+
+    if (cleanLines.isEmpty()) return title
+
+    val joined = cleanLines.joinToString(" ")
+      .replace(Regex("""\s+"""), " ")
+      .trim()
+
+    if (joined.length <= 175) return joined
+
+    // Try to take 1-2 complete sentences within ~175 chars
+    val sentenceMatches = Regex("""[^.!?]+[.!?]""").findAll(joined).map { it.value.trim() }.toList()
+    if (sentenceMatches.isNotEmpty()) {
+      val sb = StringBuilder()
+      for (sentence in sentenceMatches) {
+        val candidate = if (sb.isEmpty()) sentence else "${sb} $sentence"
+        if (candidate.length <= 180) {
+          sb.clear()
+          sb.append(candidate)
+        } else {
+          break
+        }
+      }
+      if (sb.isNotEmpty()) return sb.toString()
+    }
+
+    // Extractive fallback without mid-word cutoff
+    val slice = joined.substring(0, 170.coerceAtMost(joined.length))
+    val lastSpace = slice.lastIndexOf(' ')
+    val cleanCut = if (lastSpace > 100) slice.substring(0, lastSpace) else slice
+    return "$cleanCut…"
+  }
+
+  fun loadPersistedAnnouncements(context: Context): List<MiniHqAnnouncement>? = runCatching {
+    val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .getString(KEY_SCRAPED_ANNOUNCEMENTS_JSON, null)
+      ?.takeIf { it.isNotBlank() } ?: return null
+    announcementJson.decodeFromString<List<MiniHqAnnouncement>>(raw)
+  }.getOrNull()
+
+  private fun persistAnnouncements(context: Context, list: List<MiniHqAnnouncement>) {
+    runCatching {
+      val encoded = announcementJson.encodeToString(list)
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putString(KEY_SCRAPED_ANNOUNCEMENTS_JSON, encoded)
+        .apply()
+    }
   }
 
   private suspend fun syncResourcesToLocalCacheAndDb(
@@ -2121,6 +2320,9 @@ object MiniHqScraperService {
       }
       SyncScope.ANNOUNCEMENTS -> {
         _scrapedAnnouncements.value = emptyList()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+          .remove(KEY_SCRAPED_ANNOUNCEMENTS_JSON)
+          .apply()
       }
       SyncScope.ALL -> Unit
     }

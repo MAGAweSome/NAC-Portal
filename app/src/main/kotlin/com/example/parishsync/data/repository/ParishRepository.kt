@@ -517,15 +517,33 @@ class OfflineFirstParishRepository(
     dao.observeAllServingSchedules()
 
   override suspend fun ensureSeedDataPopulated() {
-    if (dao.getDistrictsOnce().isEmpty()) {
-      dao.upsertDistricts(ParishSeedData.defaultCanadianDistricts())
+    val existingDistrictIds = dao.getDistrictsOnce().map { it.id }.toSet()
+    val missingDistricts = ParishSeedData.defaultCanadianDistricts().filter { it.id !in existingDistrictIds }
+    if (missingDistricts.isNotEmpty()) {
+      dao.upsertDistricts(missingDistricts)
     }
-    val woodstock = ParishSeedData.woodstockCongregation()
-    val existingWoodstock = dao.getCongregationById(woodstock.id)
-    if (existingWoodstock == null) {
-      dao.upsertCongregation(woodstock)
-    } else if (existingWoodstock.districtId.isBlank()) {
-      dao.upsertCongregation(existingWoodstock.copy(districtId = woodstock.districtId))
+
+    val existingCongregations = dao.getCongregationsOnce()
+    val byId = existingCongregations.associateBy { it.id }
+    val byName = existingCongregations.associateBy { it.displayName.trim().lowercase() }
+
+    ParishSeedData.defaultCanadianCongregations().forEach { seed ->
+      val existing = byId[seed.id] ?: byName[seed.displayName.trim().lowercase()]
+      if (existing == null) {
+        dao.upsertCongregation(seed)
+      } else {
+        val needsDistrict = existing.districtId.isBlank()
+        val needsAddress = seed.address.isNotBlank() &&
+          (existing.address.isBlank() || existing.address == "Woodstock, ON")
+        if (needsDistrict || needsAddress) {
+          dao.upsertCongregation(
+            existing.copy(
+              districtId = if (needsDistrict) seed.districtId else existing.districtId,
+              address = if (needsAddress) seed.address else existing.address
+            )
+          )
+        }
+      }
     }
 
     val seedAccounts = ParishSeedData.defaultRosterUsers()

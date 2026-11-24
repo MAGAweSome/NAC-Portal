@@ -698,4 +698,33 @@ class ParishSyncUnitTest {
     assertFalse(MiniHqScraperService.isSyncLockActive(isSyncing = true, startedAtMs = start, nowMs = start + 125_000L, forceRefresh = false))
     assertFalse(MiniHqScraperService.isSyncLockActive(isSyncing = true, startedAtMs = start, nowMs = start + 10_000L, forceRefresh = true))
   }
+
+  @Test
+  fun defaultCanadianCongregations_containsAll75CongregationsAcross9Districts() {
+    val districts = com.example.parishsync.data.local.ParishSeedData.defaultCanadianDistricts()
+    val congregations = com.example.parishsync.data.local.ParishSeedData.defaultCanadianCongregations()
+
+    assertEquals(9, districts.size)
+    assertEquals(75, congregations.size)
+    assertEquals(75, congregations.map { it.id }.toSet().size)
+
+    val districtIds = districts.map { it.id }.toSet()
+    assertTrue(congregations.all { it.districtId in districtIds })
+
+    val countsByDistrict = congregations.groupingBy { it.districtId }.eachCount()
+    assertEquals(8, countsByDistrict["dist_bc"])
+    assertEquals(8, countsByDistrict["dist_ab"])
+    assertEquals(6, countsByDistrict["dist_sk"])
+    assertEquals(3, countsByDistrict["dist_mb"])
+    assertEquals(7, countsByDistrict["dist_no"])
+    assertEquals(14, countsByDistrict["dist_kitchener"])
+    assertEquals(7, countsByDistrict["dist_toronto"])
+    assertEquals(5, countsByDistrict["dist_hamilton"])
+    assertEquals(17, countsByDistrict["dist_eastern"])
+
+    val woodstock = congregations.first { it.id == com.example.parishsync.data.local.ParishSeedData.WOODSTOCK_CONGREGATION_ID }
+    assertEquals("Woodstock", woodstock.displayName)
+    assertEquals("45 Cronyn St, N4S 3T4 Woodstock", woodstock.address)
+    assertEquals("dist_kitchener", woodstock.districtId)
+  }
 }

@@ -50,12 +50,125 @@ object ParishSeedData {
       id = WOODSTOCK_CONGREGATION_ID,
       districtId = "dist_kitchener",
       displayName = WOODSTOCK_CONGREGATION_NAME,
-      address = "Woodstock, ON",
+      address = "45 Cronyn St, N4S 3T4 Woodstock",
       rectorName = BOOTSTRAP_ERIC_NAME,
       primaryServiceTimes = "Sun 10:30 AM & Wed 7:30 PM",
       sundayServiceTime = "10:30 AM",
       wednesdayServiceTime = "7:30 PM"
     )
+
+  private fun seedCongregation(
+    id: String,
+    districtId: String,
+    displayName: String,
+    address: String = ""
+  ): CongregationEntity = CongregationEntity(
+    id = id,
+    districtId = districtId,
+    displayName = displayName,
+    address = address,
+    primaryServiceTimes = "Sun 10:30 AM & Wed 7:30 PM",
+    sundayServiceTime = "10:30 AM",
+    wednesdayServiceTime = "7:30 PM"
+  )
+
+  /**
+   * All 75 NAC Canada congregations across 9 districts (updated Nov 23, 2026).
+   */
+  fun defaultCanadianCongregations(): List<CongregationEntity> = listOf(
+    // British Columbia (8)
+    seedCongregation("cong_coquitlam", "dist_bc", "Coquitlam", "813 Sharpe St, V3C 3M4 Coquitlam"),
+    seedCongregation("cong_langley", "dist_bc", "Langley", "19999 53rd Ave, V3A 6V2 Langley"),
+    seedCongregation("cong_nanaimo", "dist_bc", "Nanaimo", "600 Wentworth St, V9R 3E5 Nanaimo"),
+    seedCongregation("cong_fraser_valley", "dist_bc", "Fraser Valley", "6665 Beaufort Rd, V2R 2C5 Chilliwack"),
+    seedCongregation("cong_victoria_bc", "dist_bc", "Victoria BC", "3382 Harriet Rd, V8Z 3S4 Victoria"),
+    seedCongregation("cong_kamloops", "dist_bc", "Kamloops", "2085 Parkcrest Ave, V2B 4X2 Kamloops"),
+    seedCongregation("cong_kelowna", "dist_bc", "Kelowna", "155 Nickel Rd, V1X 4E5 Kelowna"),
+    seedCongregation("cong_100_mile_house", "dist_bc", "100 Mile House", "530 Horse Lake Rd Suite 6B, V0K 2E0 100 Mile House"),
+
+    // Alberta (8)
+    seedCongregation("cong_castlegar_bc", "dist_ab", "Castlegar, BC", "200 Lakeview St, V1N 1B8 Castlegar"),
+    seedCongregation("cong_cranbrook_bc", "dist_ab", "Cranbrook, BC", "821 1st St S, V1C 6E9 Cranbrook"),
+    seedCongregation("cong_calgary", "dist_ab", "Calgary", "7440 Old Banff Coach Rd SW, T3H 4C2 Calgary"),
+    seedCongregation("cong_chestermere", "dist_ab", "Chestermere", "133 Rainbow Falls Dr, T1X 0A7 Chestermere"),
+    seedCongregation("cong_red_deer", "dist_ab", "Red Deer", "1 Gilbert Cr, T4P 3L3 Red Deer"),
+    seedCongregation("cong_edmonton", "dist_ab", "Edmonton", "8735 Connors Rd NW, T6C 4B4 Edmonton"),
+    seedCongregation("cong_lethbridge", "dist_ab", "Lethbridge", "115 Mount Blakiston Rd W, T1K 6L3 Lethbridge"),
+    seedCongregation("cong_medicine_hat", "dist_ab", "Medicine Hat", "701 1st St SW, T1A 3Z5 Medicine Hat"),
+
+    // Saskatchewan (6)
+    seedCongregation("cong_weyburn", "dist_sk", "Weyburn", "606 1st Ave NW, S4H 1P2 Weyburn"),
+    seedCongregation("cong_regina", "dist_sk", "Regina", "3805 Green Falls Dr, S4V 3H5 Regina"),
+    seedCongregation("cong_moose_jaw", "dist_sk", "Moose Jaw", "1130 Simcoe St, S6H 3J4 Moose Jaw"),
+    seedCongregation("cong_saskatoon", "dist_sk", "Saskatoon", "325 Camponi Pl, S7M 1E9 Saskatoon"),
+    seedCongregation("cong_prince_albert", "dist_sk", "Prince Albert", "125 12th St E, S6V 1B7 Prince Albert"),
+    seedCongregation("cong_swift_current", "dist_sk", "Swift Current", ""),
+
+    // Manitoba (3)
+    seedCongregation("cong_winnipeg", "dist_mb", "Winnipeg", "1755 Taylor Ave, R3N 1Y2 Winnipeg"),
+    seedCongregation("cong_brandon", "dist_mb", "Brandon", "256 10th Street, R7A 4E8 Brandon"),
+    seedCongregation("cong_kenora_on", "dist_mb", "Kenora, ON", "51 Cambrian Dr, P9N 4A4 Kenora"),
+
+    // Northern Ontario (7)
+    seedCongregation("cong_thunder_bay", "dist_no", "Thunder Bay", "639 Van Norman St, P7A 4G4 Thunder Bay"),
+    seedCongregation("cong_sault_ste_marie", "dist_no", "Sault Ste Marie", "135 Arden St, P6C 5K6 Sault Ste. Marie"),
+    seedCongregation("cong_sudbury", "dist_no", "Sudbury", "522 Barrydowne Rd, P3A 3T3 Sudbury"),
+    seedCongregation("cong_north_bay", "dist_no", "North Bay", "46 Joseph St, P1A 1L6 North Bay"),
+    seedCongregation("cong_huntsville", "dist_no", "Huntsville", ""),
+    seedCongregation("cong_marquette_usa", "dist_no", "Marquette USA", ""),
+    seedCongregation("cong_duluth_usa", "dist_no", "Duluth USA", ""),
+
+    // Kitchener (14)
+    seedCongregation("cong_fergus", "dist_kitchener", "Fergus", "792 Wellington Rd 18, N1M 3A8 Fergus"),
+    seedCongregation("cong_guelph", "dist_kitchener", "Guelph", "245 Delhi St, N1E 4K5 Guelph"),
+    seedCongregation("cong_kitchener_east", "dist_kitchener", "Kitchener East", "180 Lorraine Ave, N2B 3R3 Kitchener"),
+    seedCongregation("cong_kitchener_spanish", "dist_kitchener", "Kitchener Spanish", "180 Lorraine Ave, N2B 3R3 Kitchener"),
+    seedCongregation("cong_margaret_ave", "dist_kitchener", "Margaret Ave", "160 Margaret Ave, N2H 4J2 Kitchener"),
+    seedCongregation("cong_cambridge", "dist_kitchener", "Cambridge", "10 Birkinshaw Road, N1P 0A5 Cambridge"),
+    seedCongregation("cong_new_hamburg", "dist_kitchener", "New Hamburg", "416 Waterloo St, N3A 1T5 New Hamburg"),
+    woodstockCongregation(),
+    seedCongregation("cong_hanover", "dist_kitchener", "Hanover", "517 12th St, N4N 1W1 Hanover"),
+    seedCongregation("cong_owen_sound", "dist_kitchener", "Owen Sound", "1620 9th Ave E, N4K 6S2 Owen Sound"),
+    seedCongregation("cong_london_ontario", "dist_kitchener", "London Ontario", "795 Baransway Drive, N5V 0A2 London"),
+    seedCongregation("cong_windsor", "dist_kitchener", "Windsor", "5265 Wyandotte St E, N8S 1L5 Windsor"),
+    seedCongregation("cong_sarnia", "dist_kitchener", "Sarnia", "116 Front St S, N7T 2M4 Sarnia"),
+    seedCongregation("cong_stratford", "dist_kitchener", "Stratford", "350 St Vincent St S, N5A 1E7 Stratford"),
+
+    // Toronto (7)
+    seedCongregation("cong_toronto_central", "dist_toronto", "Toronto Central", "407 Dupont St, M5R 1W3 Toronto"),
+    seedCongregation("cong_bellamy", "dist_toronto", "Bellamy", "930 Bellamy Road North, M1H 1G9 Scarborough"),
+    seedCongregation("cong_brampton", "dist_toronto", "Brampton", "45 Eastbourne Dr, L6T 4E9 Brampton"),
+    seedCongregation("cong_brampton_french", "dist_toronto", "Brampton French", "45 Eastbourne Dr, L6T 4E9 Brampton"),
+    seedCongregation("cong_newmarket", "dist_toronto", "Newmarket", "1060 Jacarandah Dr, L3Y 3G8 Newmarket"),
+    seedCongregation("cong_barrie", "dist_toronto", "Barrie", "110 Letitia St, L4N 1P5 Barrie"),
+    seedCongregation("cong_orillia", "dist_toronto", "Orillia", "56 Wyandotte St, L3V 5M9 Orillia"),
+
+    // Hamilton (5)
+    seedCongregation("cong_halton", "dist_hamilton", "Halton", "4209 Palladium Way, L7M 0V9 Burlington"),
+    seedCongregation("cong_hamilton_ontario", "dist_hamilton", "Hamilton Ontario", "922 Upper Sherman Ave, L8V 3N3 Hamilton"),
+    seedCongregation("cong_niagara", "dist_hamilton", "Niagara", "3400 Schmon Pky, L2V 4Y6 Thorold"),
+    seedCongregation("cong_st_catharines_spanish", "dist_hamilton", "St Catharines Spanish", "3400 Schmon Pky, L2V 4Y6 Thorold"),
+    seedCongregation("cong_simcoe", "dist_hamilton", "Simcoe", ""),
+
+    // Eastern Canada (17)
+    seedCongregation("cong_oshawa", "dist_eastern", "Oshawa", "601 Laval St, L1J 6L8 Oshawa"),
+    seedCongregation("cong_lindsay", "dist_eastern", "Lindsay", "45 Durham St W, K9V 2P7 Lindsay"),
+    seedCongregation("cong_belleville", "dist_eastern", "Belleville", "495 Victoria Ave, K8N 2G4 Belleville"),
+    seedCongregation("cong_kingston", "dist_eastern", "Kingston", "820 Rowantree Cr, K7P 1P5 Kingston"),
+    seedCongregation("cong_ottawa_west", "dist_eastern", "Ottawa West", "2680 Priscilla Street, K2B 7E2 Ottawa"),
+    seedCongregation("cong_ottawa_east", "dist_eastern", "Ottawa East", "250 Somerset Street East, K1N 6V6 Ottawa"),
+    seedCongregation("cong_montreal_laval", "dist_eastern", "Montreal-Laval", "4375 Boul Samson, H7W 2G8 Laval"),
+    seedCongregation("cong_st_leonard", "dist_eastern", "St. Léonard", "8970 Boul Lacordaire, H1R 2B3 Saint-Léonard"),
+    seedCongregation("cong_quebec_city", "dist_eastern", "Quebec City", "5350 3e Av O, G1H 7B9 Québec"),
+    seedCongregation("cong_sherbrooke", "dist_eastern", "Sherbrooke", "366 Rue Saint-Michel, J1E 2K7 Sherbrooke"),
+    seedCongregation("cong_trois_rivieres", "dist_eastern", "Trois-Rivières", "2900 Mgr. St-Arnaud, G9A 5L2 Trois-Rivières"),
+    seedCongregation("cong_halifax", "dist_eastern", "Halifax", "151 Joffre Street, B2Y 3C7 Dartmouth"),
+    seedCongregation("cong_moncton", "dist_eastern", "Moncton", "99 Wynwood Drive, E1A 2M4 Moncton"),
+    seedCongregation("cong_charlottetown", "dist_eastern", "Charlottetown", "17 St Pius X Ave, C1A 6A2 Charlottetown"),
+    seedCongregation("cong_denbigh", "dist_eastern", "Denbigh", ""),
+    seedCongregation("cong_st_hyacinthe", "dist_eastern", "St-Hyacinthe", ""),
+    seedCongregation("cong_saint_john", "dist_eastern", "Saint John", "")
+  )
 
   fun bootstrapAdminAccount(): UserProfileEntity =
     UserProfileEntity(
